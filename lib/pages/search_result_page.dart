@@ -388,7 +388,7 @@ class _SuggestionsState extends State<_Suggestions> {
     return false;
   }
 
-  void onSelected(String text, TranslationType? type) {
+  Future<void> onSelected(String text, TranslationType? type) async {
     var controller = widget.controller.controller;
     var words = controller.text.split(" ");
     if (words.length >= 2 &&
@@ -404,7 +404,16 @@ class _SuggestionsState extends State<_Suggestions> {
       text = "'$text'";
     }
     if (type != null) {
-      controller.text += "${type.name}:$text ";
+      var func = ComicSource.find(sourceKey)!
+          .searchPageData?.onTagSuggestionSelected;
+      if (func != null) {
+        try {
+          text = await func(type.name, text);
+        } catch (_) {}
+        controller.text += "$text ";
+      } else {
+        controller.text += "${type.name}:$text ";
+      }
     } else {
       controller.text += "$text ";
     }

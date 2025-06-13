@@ -376,8 +376,10 @@ class SearchPageData {
   final SearchFunction? loadPage;
 
   final SearchNextFunction? loadNext;
+  final TagSuggestionSelectedFunc? onTagSuggestionSelected;
 
-  const SearchPageData(this.searchOptions, this.loadPage, this.loadNext);
+  const SearchPageData(
+      this.searchOptions, this.loadPage, this.loadNext, this.onTagSuggestionSelected);
 }
 
 class SearchOptions {

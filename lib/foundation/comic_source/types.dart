@@ -46,3 +46,6 @@ typedef HandleClickTagEvent = PageJumpTarget? Function(
 
 /// [rating] is the rating value, 0-10. 1 represents 0.5 star.
 typedef StarRatingFunc = Future<Res<bool>> Function(String comicId, int rating);
+
+typedef TagSuggestionSelectedFunc = Future<String> Function(
+    String namespace, String tag)?;
