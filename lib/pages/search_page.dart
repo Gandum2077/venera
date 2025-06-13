@@ -365,7 +365,7 @@ class _SearchPageState extends State<SearchPage> {
       return false;
     }
 
-    void onSelected(String text, TranslationType? type) {
+    Future<void> onSelected(String text, TranslationType? type) async {
       var words = controller.text.split(" ");
       if (words.length >= 2 &&
           check("${words[words.length - 2]} ${words[words.length - 1]}", text,
@@ -377,7 +377,16 @@ class _SearchPageState extends State<SearchPage> {
             controller.text.replaceLast(words[words.length - 1], "");
       }
       if (type != null) {
-        controller.text += "${type.name}:$text ";
+        var func = ComicSource.find(searchTarget)!
+            .searchPageData?.onTagSuggestionSelected;
+        if (func != null) {
+          try {
+            text = await func(type.name, text);
+          } catch (_) {}
+          controller.text += "$text ";
+        } else {
+          controller.text += "${type.name}:$text ";
+        }
       } else {
         controller.text += "$text ";
       }

@@ -650,7 +650,21 @@ class ComicSourceParser {
       };
     }
 
-    return SearchPageData(options, loadPage, loadNext);
+    TagSuggestionSelectedFunc? onTagSuggestionSelected;
+    if (_checkExists("search.onTagSuggestionSelected")) {
+      onTagSuggestionSelected = (namespace, tag) async {
+        var res = JsEngine().runCode("""
+          ComicSource.sources.$_key.search.onTagSuggestionSelected(
+            ${jsonEncode(namespace)}, ${jsonEncode(tag)})
+        """);
+        if (res is Future) {
+          res = await res;
+        }
+        return res.toString();
+      };
+    }
+
+    return SearchPageData(options, loadPage, loadNext, onTagSuggestionSelected);
   }
 
   LoadComicFunc? _parseLoadComicFunc() {
