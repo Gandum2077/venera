@@ -1,71 +1,85 @@
-name: Build macOS
-run-name: Build macOS
+name: Build & Release macOS
+run-name: Build & Release macOS
+
 on:
   workflow_dispatch:
 
 jobs:
-  Build_MacOS:
+  build-macos:
     runs-on: macos-15
+    outputs:
+      artifact-path: ${{ steps.upload.outputs.artifact-path }}
     steps:
-      - uses: actions/checkout@v3
-      - uses: subosito/flutter-action@v2
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          channel: "stable"
+          channel: stable
           flutter-version-file: pubspec.yaml
           architecture: x64
-      - run: sudo xcode-select --switch /Applications/Xcode_16.0.app
-      - run: flutter pub get
-        # Step 1: Decode and install the certificate
-      - name: Decode and install certificate
+
+      - name: Select Xcode 16
+        run: sudo xcode-select --switch /Applications/Xcode_16.0.app
+
+      - name: Install Dart deps
+        run: flutter pub get
+
+      - name: Decode & Install Certificate
         env:
           CERTIFICATE: ${{ secrets.CERTIFICATE }}
           CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
         run: |
           echo "$CERTIFICATE" | base64 --decode > signing_certificate.p12
-          security import signing_certificate.p12 -k ~/Library/Keychains/login.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security import signing_certificate.p12 \
+            -k ~/Library/Keychains/login.keychain \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
 
-      - name: Check rust-toolchain.toml
-        run: rustup show
-
-      # Step 2: Build the Flutter macOS app
-      - name: Build Flutter macOS App
+      - name: Build macOS App
         run: flutter build macos --release
 
-      # Step 3: Create the DMG file
       - name: Create DMG
         run: |
-          mkdir -p dist
           mkdir -p dist/dmg_contents
           cp -R build/macos/Build/Products/Release/venera.app dist/dmg_contents/
           ln -s /Applications dist/dmg_contents/Applications
-          hdiutil create -volname "venera" -srcfolder dist/dmg_contents -ov -format UDZO "dist/venera.dmg"
+          hdiutil create \
+            -volname "venera" \
+            -srcfolder dist/dmg_contents \
+            -ov -format UDZO \
+            dist/venera.dmg
 
-      - name: Add version to filename
+      - name: Rename DMG with Version
         run: |
-          APP_VERSION=$(grep "version:" pubspec.yaml | cut -d':' -f2 | tr -d ' ')
-          mkdir -p result
-          mv dist/venera.dmg result/venera-$APP_VERSION.dmg
+          APP_VERSION=$(grep '^version:' pubspec.yaml | cut -d':' -f2 | tr -d ' ')
+          mv dist/venera.dmg venera-${APP_VERSION}.dmg
 
-      # Step 4: Attach and upload artifacts (optional)
-      - name: Upload DMG
+      - name: Upload DMG Artifact
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: macos_build
-          path: result/
-  
-  Release:
+          path: venera-*.dmg
+
+  release:
+    name: Create Draft Release
+    needs: build-macos
     runs-on: ubuntu-22.04
-    needs: [Build_MacOS]
-    if: github.event_name == 'release'  # 仅在 push 事件时执行
+    if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download DMG Artifact
+        uses: actions/download-artifact@v4
         with:
           name: macos_build
-          path: outputs
-      - uses: softprops/action-gh-release@v2
+          path: release-assets
+
+      - name: Create Draft GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name || 'v' + steps.upload.outputs.artifact-path }}
+          files: release-assets/*.dmg
           draft: true
-          files: outputs/*.dmg
         env:
-          GITHUB_TOKEN: ${{ secrets.ACTION_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
