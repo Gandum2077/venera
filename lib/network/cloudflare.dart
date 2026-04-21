@@ -1,4 +1,5 @@
 import 'dart:io' as io;
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -98,18 +99,53 @@ class CloudflareInterceptor extends Interceptor {
   }
 }
 
+Future<String> _resolveCurrentWebviewUrl(
+  InAppWebViewController controller,
+  String fallback,
+) async {
+  try {
+    final current = await controller.getUrl();
+    final value = current?.toString();
+    if (value != null && value.isNotEmpty) {
+      return value;
+    }
+  } catch (e) {
+    Log.warning("Cloudflare", "Failed to resolve webview url\n$e");
+  }
+  return fallback;
+}
+
+Future<String> _resolveCurrentDesktopWebviewUrl(
+  DesktopWebview controller,
+  String fallback,
+) async {
+  try {
+    final value = await controller.evaluateJavascript(
+      "JSON.stringify(location.href)",
+    );
+    if (value != null) {
+      final decoded = jsonDecode(value);
+      if (decoded is String && decoded.isNotEmpty) {
+        return decoded;
+      }
+    }
+  } catch (e) {
+    Log.warning("Cloudflare", "Failed to resolve desktop webview url\n$e");
+  }
+  return fallback;
+}
+
 void passCloudflare(CloudflareException e, void Function() onFinished) async {
   var url = e.url;
-  var uri = Uri.parse(url);
 
-  void saveCookies(Map<String, String> cookies) {
-    var domain = uri.host;
+  void saveCookies(Uri currentUri, Map<String, String> cookies) {
+    var domain = currentUri.host;
     var splits = domain.split('.');
     if (splits.length > 1) {
       domain = ".${splits[splits.length - 2]}.${splits[splits.length - 1]}";
     }
     SingleInstanceCookieJar.instance!.saveFromResponse(
-      uri,
+      currentUri,
       List<io.Cookie>.generate(cookies.length, (index) {
         var cookie = io.Cookie(
             cookies.keys.elementAt(index), cookies.values.elementAt(index));
@@ -122,9 +158,17 @@ void passCloudflare(CloudflareException e, void Function() onFinished) async {
   // windows version of package `flutter_inappwebview` cannot get some cookies
   // Using DesktopWebview instead
   if (App.isLinux) {
+    bool finished = false;
+    void complete() {
+      if (finished) return;
+      finished = true;
+      onFinished();
+    }
     var webview = DesktopWebview(
       initialUrl: url,
       onTitleChange: (title, controller) async {
+        url = await _resolveCurrentDesktopWebviewUrl(controller, url);
+        final currentUri = Uri.parse(url);
         var head =
             await controller.evaluateJavascript("document.head.innerHTML") ??
                 "";
@@ -149,19 +193,25 @@ void passCloudflare(CloudflareException e, void Function() onFinished) async {
           }
           var cookiesMap = await controller.getCookies(url);
           if (cookiesMap['cf_clearance'] == null) {
+            Log.info(
+              "Cloudflare",
+              "cf_clearance is still missing for $url, cookies: ${cookiesMap.keys.toList()}",
+            );
             return;
           }
-          saveCookies(cookiesMap);
+          saveCookies(currentUri, cookiesMap);
           controller.close();
-          onFinished();
+          complete();
         }
       },
-      onClose: onFinished,
+      onClose: complete,
     );
     webview.open();
   } else {
     bool success = false;
     void check(InAppWebViewController controller) async {
+      url = await _resolveCurrentWebviewUrl(controller, url);
+      final currentUri = Uri.parse(url);
       var head = await controller.evaluateJavascript(
           source: "document.head.innerHTML") as String;
       var body = await controller.evaluateJavascript(
@@ -186,9 +236,13 @@ void passCloudflare(CloudflareException e, void Function() onFinished) async {
         if (cookies.firstWhereOrNull(
                 (element) => element.name == 'cf_clearance') ==
             null) {
+          Log.info(
+            "Cloudflare",
+            "cf_clearance is still missing for $url, cookies: ${cookies.map((e) => e.name).toList()}",
+          );
           return;
         }
-        SingleInstanceCookieJar.instance?.saveFromResponse(uri, cookies);
+        SingleInstanceCookieJar.instance?.saveFromResponse(currentUri, cookies);
         if (!success) {
           App.rootPop();
           success = true;
@@ -207,13 +261,17 @@ void passCloudflare(CloudflareException e, void Function() onFinished) async {
           check(controller);
         },
         onStarted: (controller) async {
+          url = await _resolveCurrentWebviewUrl(controller, url);
           var ua = await controller.getUA();
           if (ua != null) {
             appdata.implicitData['ua'] = ua;
             appdata.writeImplicitData();
           }
           var cookies = await controller.getCookies(url) ?? [];
-          SingleInstanceCookieJar.instance?.saveFromResponse(uri, cookies);
+          SingleInstanceCookieJar.instance?.saveFromResponse(
+            Uri.parse(url),
+            cookies,
+          );
         },
       ),
     );
