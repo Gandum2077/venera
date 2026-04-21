@@ -897,15 +897,12 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
   }
 
   Iterable<Widget> buildSourceSettings() sync* {
-    // Try to get dynamic settings first (for getters), fall back to cached settings
-    var settingsMap = source.getSettingsDynamic() ?? source.settings;
-    
-    if (settingsMap == null) {
+    if (source.settings == null) {
       return;
     } else if (source.data['settings'] == null) {
       source.data['settings'] = {};
     }
-    for (var item in settingsMap.entries) {
+    for (var item in source.settings!.entries) {
       var key = item.key;
       String type = item.value['type'];
       try {
@@ -1090,6 +1087,45 @@ class _LoginPageState extends State<_LoginPage> {
 
   final Map<String, String> _cookies = {};
 
+  Future<String> _resolveCurrentWebviewUrl(
+    InAppWebViewController controller,
+    String fallback,
+  ) async {
+    try {
+      final current = await controller.getUrl();
+      final value = current?.toString();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    } catch (e) {
+      Log.warning("ComicSourcePage", "Failed to resolve webview url\n$e");
+    }
+    return fallback;
+  }
+
+  Future<String> _resolveCurrentDesktopWebviewUrl(
+    DesktopWebview controller,
+    String fallback,
+  ) async {
+    try {
+      final value = await controller.evaluateJavascript(
+        "JSON.stringify(location.href)",
+      );
+      if (value != null) {
+        final decoded = jsonDecode(value);
+        if (decoded is String && decoded.isNotEmpty) {
+          return decoded;
+        }
+      }
+    } catch (e) {
+      Log.warning(
+        "ComicSourcePage",
+        "Failed to resolve desktop webview url\n$e",
+      );
+    }
+    return fallback;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1245,6 +1281,7 @@ class _LoginPageState extends State<_LoginPage> {
     bool success = false;
 
     void validate(InAppWebViewController c) async {
+      url = await _resolveCurrentWebviewUrl(c, url);
       if (widget.config.checkLoginStatus != null &&
           widget.config.checkLoginStatus!(url, title)) {
         var cookies = (await c.getCookies(url)) ?? [];
@@ -1307,6 +1344,7 @@ class _LoginPageState extends State<_LoginPage> {
     }
 
     void validate(DesktopWebview webview) async {
+      url = await _resolveCurrentDesktopWebviewUrl(webview, url);
       if (widget.config.checkLoginStatus != null &&
           widget.config.checkLoginStatus!(url, title)) {
         var cookiesMap = await webview.getCookies(url);
